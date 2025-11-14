@@ -1,0 +1,179 @@
+---
+title: "Honors Contract"
+author: "Kacie Chong"
+date: "2025-04-22"
+output: pdf_document
+---
+## Loading Required Libraries
+To replicate the analysis from the original study, I first loaded the necessary R libraries to handle SPSS data, perform descriptive and inferential statistics, and produce publication-ready tables. These included haven, psych, dplyr, labelled, effsize, and knitr as shown below: 
+```{r}
+# Load required libraries
+library(haven)       # To read SPSS .sav files
+library(psych)       # For descriptive statistics
+library(dplyr)       # For data manipulation
+library(labelled)    # For handling labelled SPSS data
+library(effsize)     # For effect size calculations (Cohen's d)
+library(knitr)       # To create neat tables     
+```
+
+## Importing and Preparing the Dataset
+Next, I imported the raw dataset from SPSS format and converted it into a .csv file for compatibility with common R data handling functions. After re-importing the .csv as a dataframe, I prepared it for analysis:
+* Converted the Condition variable to a factor to distinguish between the intervention (1) and control (2) groups
+* Renamed lengthy variable names using gsub() to improve readability in output tables
+```{r}
+# Load SPSS data file, convert to CSV, and read it back in
+load_savfile <- read_spss("/Users/kaciechong/Desktop/Honors/Kanstrup_Singh_Holmes_EKUT_Pilot_data (2).sav")
+write.csv(load_savfile, file = "/Users/kaciechong/Desktop/Honors/myfile.csv", row.names = FALSE)
+data <- read.csv("/Users/kaciechong/Desktop/Honors/myfile.csv")
+```
+```{r}
+# Set the 'Condition' column as a factor and prepare an empty dataframe for descriptive stats
+data$Condition <- as.factor(data$Condition)
+descriptive_stats <- data.frame(row.names = colnames(data), stringsAsFactors = FALSE)
+
+# Calculate descriptive statistics (n, mean, sd) for each group: Intervention (Condition == 1) and Control (Condition == 2)
+## Shortened "intervention" to "inter" for readability on table
+## Shortened "control" to "con" for readability on table
+## Shorten name with abbreviations for readability on table
+names(data) <- gsub("Intervention_within_6h_72h_since_trauma", "Interv_6_72h", names(data))
+names(data) <- gsub("Inclusion_within_6h_72h_since_trauma", "Inclus_6_72h", names(data))
+```
+
+## Computing Descriptive Statistics by Group
+To explore the basic properties of the dataset, I computed descriptive statistics (sample size, mean, and standard deviation) for each variable, separated by intervention and control groups. This summary provides an initial comparison between conditions and helps assess baseline differences and distribution characteristics.
+```{r}
+tetris_stats <- describe(subset(data, Condition == 1)) %>%
+  select(c("n", "mean", "sd")) %>%
+  rename("inter_n" = n,
+         "inter_mean" = mean,
+         "inter_sd" = sd)
+
+control_stats <- describe(subset(data, Condition == 2)) %>%
+  select(c("n", "mean", "sd")) %>%
+  rename("con_n" = n,
+         "con_mean" = mean,
+         "con_sd" = sd)
+
+# Combine stats into a single dataframe
+descriptive_stats <- cbind(tetris_stats, control_stats)
+kable(descriptive_stats, caption = "Descriptive Statistics")
+```
+
+## Descriptive Statistics for Primary Outcome
+In this section, I focused on the primary outcome variable from the original study, Intrusions_diary_w1_total. I calculated group-wise descriptive statistics including sample size, mean, and standard deviation for the intervention and control groups. These summary statistics provide a clear comparison of the central tendency and variability between groups at the first time point.
+```{r}
+# Focus on one variable of interest: Intrusions_diary_w1_total
+##  Calculate group-wise descriptive statistics for this variable
+intervention <- describe(data$Intrusions_diary_w1_total[data$Condition == 1])
+control <- describe(data$Intrusions_diary_w1_total[data$Condition == 2])
+
+descriptives <- data.frame(
+  group = c("Intervention", "Control"),
+  n = c(intervention$n, control$n),
+  mean = c(intervention$mean, control$mean),
+  sd = c(intervention$sd, control$sd)
+)
+kable(descriptive_stats, caption = "Descriptive Statistics")
+```
+
+## Effect Size and Hypothesis Testing
+To assess whether the observed difference in Intrusions_diary_w1_total between the intervention and control groups is statistically meaningful, I first removed any missing data for this variable. I then calculated Cohen’s d as a measure of effect size, which quantifies the standardized difference between the two groups. Following this, I conducted an independent samples t-test to determine if the mean difference was statistically significant. The results include the test statistic, degrees of freedom, p-value, confidence intervals, and the raw mean difference between groups.
+```{r}
+# Perform effect size (Cohen's d) and t-test on Intrusions_diary_w1_total
+# First, remove missing values
+clean_data <- data %>%
+  filter(!is.na(Intrusions_diary_w1_total))
+
+# Extract values for each group
+intervention <- clean_data %>%
+  filter(Condition == 1) %>%
+  pull(Intrusions_diary_w1_total)
+
+control <- clean_data %>%
+  filter(Condition == 2) %>%
+  pull(Intrusions_diary_w1_total)
+
+# Compute Cohen's d (pooled)
+cohen.d(control, intervention, pooled = TRUE)
+
+# Perform t-test
+t_test <- t.test(Intrusions_diary_w1_total ~ Condition, data = data)
+
+# Extract relevant results from the t-test object
+t_test_results <- data.frame(
+  Statistic = round(t_test$statistic, 3),
+  df = round(t_test$parameter, 0),
+  p_value = round(t_test$p.value, 3),
+  CI_lower = round(t_test$conf.int[1], 3),
+  CI_upper = round(t_test$conf.int[2], 3),
+  Mean_Difference = round(t_test$estimate[1] - t_test$estimate[2], 3)
+)
+
+# Print the result as a table using kable
+library(knitr)
+kable(t_test_results, caption = "T-Test Results")
+```
+
+## Summary Statistics and Effect Sizes for All Outcomes
+To comprehensively replicate the original study’s results, I developed a function that automates the calculation of descriptive statistics and Cohen’s d effect sizes for multiple outcome variables. These include both primary and secondary outcomes measured at different follow-up intervals. The function computes sample sizes, means, standard deviations, effect sizes, and confidence intervals for each variable, comparing the intervention group to the control group. I then applied this function across a full list of outcome variables and compiled the results into a single summary table. This approach mirrors the structure of Table 3 in the original publication and ensures that the replication includes all relevant outcome measures for accurate and consistent comparison.
+```{r}
+# Define a function to automate summary statistics and effect size for multiple variables
+compute_summary <- function(data, var, group_var = "Condition", group1 = 1, group2 = 2) {
+  df <- data %>% select(all_of(c(var, group_var))) %>% filter(!is.na(.data[[var]]))
+
+  group1_vals <- df %>% filter(.data[[group_var]] == group1) %>% pull(.data[[var]])
+  group2_vals <- df %>% filter(.data[[group_var]] == group2) %>% pull(.data[[var]])
+
+  # Calculate basic statistics
+  n1 <- length(group1_vals)
+  n2 <- length(group2_vals)
+  mean1 <- mean(group1_vals)
+  mean2 <- mean(group2_vals)
+  sd1 <- sd(group1_vals)
+  sd2 <- sd(group2_vals)
+
+  # Compute Cohen's d with 95% CI
+  d_result <- cohen.d(group2_vals, group1_vals, pooled = TRUE)  # control - intervention
+  d <- as.numeric(d_result$estimate)
+  ci_low <- d_result$conf.int[1]
+  ci_high <- d_result$conf.int[2]
+
+  # Return results as a dataframe row
+  return(data.frame(
+    variable = var,
+    n1 = n1, mean1 = round(mean1, 2), sd1 = round(sd1, 2),
+    n2 = n2, mean2 = round(mean2, 2), sd2 = round(sd2, 2),
+    d = round(d, 2),
+    ci = sprintf("[%.2f, %.2f]", ci_low, ci_high)
+  ))
+}
+
+# List of outcome variables to summarize
+outcomes <- c(
+  "Intrusions_diary_w1_total", "Intrusions_diary_w5_total", 
+  "IES_R_intrusion_followup1", "IES_R_avoidance_followup1", 
+  "HADS_A_followup1", "HADS_D_followup1", "HADS_total_followup1", 
+  "SRHR_followup1", "SRSR_total_followup1", "Intrusions_diary_w1_distress", 
+  "Intrusions_diary_w1_vividness", "Concentrationdisruption_followup1", 
+  "IES_R_intrusion_followup2", "IES_R_avoidance_followup2", 
+  "HADS_A_followup2", "HADS_D_followup2", "HADS_total_followup2", 
+  "SRHR_followup2", "SRSR_total_followup2", "Intrusions_diary_w5_distress", 
+  "Intrusions_diary_w5_vividness", "Concentrationdisruption_followup2", 
+  "IES_R_intrusion_followup3", "IES_R_avoidance_followup3", 
+  "HADS_A_followup3", "HADS_D_followup3", "HADS_total_followup3", 
+  "SRHR_followup3", "SRSR_total_followup3", "Concentrationdisruption_followup3", 
+  "IES_R_intrusion_followup4", "IES_R_avoidance_followup4", 
+  "HADS_A_followup4", "HADS_D_followup4", "HADS_total_followup4", 
+  "SRHR_followup4", "SRSR_total_followup4", "Concentrationdisruption_followup4"
+)
+
+# Apply the summary function to each outcome variable and compile results
+results <- do.call(rbind, lapply(outcomes, function(var) compute_summary(data, var)))
+kable(results, caption = "Summary Statistics for Multiple Outcomes")
+```
+### Comparing Results to Kanstrup et al. (2021)
+Table 4 in this report **exactly** replicates Table 3 from Kanstrup et al. (2021), presenting the primary, secondary, and other pre-specified outcome measures by condition. The table structure, outcome variables, and grouping match those in the original publication.
+
+Importantly, the first row of Table 4 corresponds directly to Row 1 of Table 3 in Kanstrup et al. (2021), which reports the effect of the intervention on intrusive memories at week 1 (Intrusions_diary_w1_total). In my analysis, the computed Cohen’s d for this comparison is 0.43, which matches the Cohen’s d = 0.43 reported in the original paper.
+
+This confirms that the effect size in my replication aligns with the primary outcome of interest in the original study.
